@@ -3,6 +3,7 @@
 from nornir import InitNornir
 from nornir_napalm.plugins.tasks import napalm_get, napalm_configure
 from nornir_utils.plugins.functions import print_result
+from nornir_netmiko.tasks import netmiko_send_config
 
 # Initialize Nornir only once
 nr = InitNornir(config_file="config.yaml")
@@ -86,24 +87,24 @@ def find_mac(mac_address):
             }
     return {}
 
-def change_vlan_on_interface(hostname, interface, vlan_id):
+def change_vlan_with_netmiko(hostname, interface, vlan_id):
     """
-    Change the VLAN of the given interface on the given device.
-    This is a template for Cisco IOS-like devices. Adjust as needed for your environment.
+    Change the VLAN of a specific interface on a Cisco IOS device using Netmiko via Nornir.
     """
     config_commands = [
-        f"configure terminal",
         f"interface {interface}",
         f"switchport access vlan {vlan_id}",
         "exit"
     ]
-    result = nr.filter(name=hostname).run(
-        task=napalm_configure,
-        configuration="\n".join(config_commands)
+    nr_filtered = nr.filter(name=hostname)
+    result = nr_filtered.run(
+        task=netmiko_send_config,
+        config_commands=config_commands
     )
-    # Check for errors or success
     for host, task_result in result.items():
         if task_result.failed:
             return False, f"Failed to change VLAN: {task_result.exception}"
-    return True, f"Changed {interface} to VLAN {vlan_id} on {hostname}"
+        else:
+            return True, f"Successfully changed {interface} to VLAN {vlan_id} on {hostname}."
+    return False, "No result returned."
 

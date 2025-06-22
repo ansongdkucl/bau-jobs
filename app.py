@@ -1,5 +1,7 @@
 from flask import Flask, render_template, request, redirect, url_for, flash
-from network_lookup import find_mac, change_vlan_on_interface
+from network_lookup import find_mac
+from network_lookup import change_vlan_with_netmiko
+                        
 
 app = Flask(__name__)
 app.secret_key = "supersecret"  # Needed for flash messages
@@ -40,9 +42,9 @@ def change_vlan():
     hostname = request.form.get("host")
     interface = request.form.get("long_interface")
     vlan_id = request.form.get("vlan")
-    success, message = change_vlan_on_interface(hostname, interface, vlan_id)
+    success, message = change_vlan_with_netmiko(hostname, interface, vlan_id)
     flash(message, "success" if success else "error")
     return redirect(url_for("index"))
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5001)
+    app.run(debug=True, port=5000)
