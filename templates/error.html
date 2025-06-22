@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Error</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        .error { background-color: #f2dede; border: 1px solid #ebccd1; padding: 15px; }
+    </style>
+</head>
+<body>
+    <h1>Error</h1>
+    <div class="error">
+        <p>An error occurred while processing your request.</p>
+        {% if error %}
+            <p><strong>Error:</strong> {{ error }}</p>
+        {% endif %}
+        <p>Please try again later or contact support if the problem persists.</p>
+    </div>
+</body>
+</html>
