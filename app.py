@@ -1,50 +1,70 @@
-from flask import Flask, render_template, request, redirect, url_for, flash
-from network_lookup import find_mac
-from network_lookup import change_vlan_with_netmiko
-                        
+import re
+from flask import Flask, render_template, request, flash, redirect, url_for
+from network_lookup import find_mac, find_port_description
 
 app = Flask(__name__)
-app.secret_key = "supersecret"  # Needed for flash messages
 
-@app.route("/", methods=["GET", "POST"])
+@app.route("/", methods=["GET"])
 def index():
+    # You can set up a default empty fields dict
     fields = {
-        "mac_address": "",
         "host": "",
         "interface": "",
-        "long_interface": "",
+        "mac_address": "",
         "vlan": "",
         "description": "",
-        "router": "",
-        "ip_address": "",
-        "snmp_location": "",
-        "interfaces_list": [],
-        "vlans_list": []
+        "snmp_location": ""
     }
-    error = None
+    return render_template("index.html", fields=fields)
 
-    if request.method == "POST":
-        mac_address = request.form.get("mac_address", "").strip()
-        fields["mac_address"] = mac_address
-        if not mac_address:
-            error = "Please enter a MAC address."
+
+@app.route("/search", methods=["POST"])
+def search():
+    query = request.form.get("query", "").strip()
+    fields = {
+        "host": "",
+        "interface": "",
+        "mac_address": "",
+        "vlan": "",
+        "description": "",
+        "snmp_location": ""
+    }
+    if not query:
+        flash("Please enter a search value.", "error")
+        return render_template("index.html", fields=fields)
+    mac_regex = r"^([0-9A-Fa-f]{2}([:\-\.]?)){5}[0-9A-Fa-f]{2}$"
+    if re.match(mac_regex, query):
+        result = find_mac(query)
+        if result:
+            fields.update({
+                "host": result.get("host", ""),
+                "interface": result.get("interface", ""),
+                "mac_address": query,
+                "vlan": result.get("vlan", ""),
+                "description": result.get("description", ""),
+                "snmp_location": result.get("snmp_location", "")
+            })
+            flash(f"MAC found on {result['host']} {result['interface']}", "success")
         else:
-            result = find_mac(mac_address)
-            if result:
-                fields.update(result)
-            else:
-                error = "MAC address not found."
-
-    return render_template("index.html", fields=fields, error=error)
-
-@app.route("/change_vlan", methods=["POST"])
-def change_vlan():
-    hostname = request.form.get("host")
-    interface = request.form.get("long_interface")
-    vlan_id = request.form.get("vlan")
-    success, message = change_vlan_with_netmiko(hostname, interface, vlan_id)
-    flash(message, "success" if success else "error")
-    return redirect(url_for("index"))
+            flash("MAC address not found.", "error")
+    else:
+        matches = find_port_description(query)
+        if matches:
+            # Show the first match, or handle as you wish
+            m = matches[0]
+            fields.update({
+                "host": m.get("host", ""),
+                "interface": m.get("interface", ""),
+                "mac_address": "",
+                "vlan": "",
+                "description": m.get("description", ""),
+                "snmp_location": ""
+            })
+            flash(f"Description found: {m['host']} ({m['interface']}): {m['description']}", "success")
+        else:
+            flash("No matching port description found.", "error")
+    return render_template("index.html", fields=fields)
 
 if __name__ == "__main__":
+    app.secret_key = "supersecret"
     app.run(debug=True, port=5000)
