@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
         body { font-family: Arial, sans-serif; background: #f8f8f8; }
-        .container { max-width: 900px; margin: 40px auto; background: #fff; border-radius: 8px; box-shadow: 0 2px 8px #ddd; padding: 32px; }
+        .container { max-width: 1200px; margin: 40px auto; background: #fff; border-radius: 8px; box-shadow: 0 2px 8px #ddd; padding: 32px; }
         h1 { text-align: center; margin-bottom: 32px; }
         .search-bar-row {
             display: flex;
@@ -68,7 +68,12 @@
             font-size: 17px;
             color: #222;
             font-weight: bold;
-            word-break: break-all;
+            word-break: break-word;
+        }
+        select.result-value {
+            font-weight: normal;
+            font-size: 15px;
+            padding: 6px;
         }
         .error, .success { text-align: center; margin-bottom: 16px; }
         .error { color: #b30000; }
@@ -86,7 +91,6 @@
             <div class="search-bar-row">
                 <input type="search" id="query" name="query" placeholder="Enter MAC address or port description..." required>
                 <button type="submit" title="Search">
-                    <!-- SVG search icon -->
                     <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                         <circle cx="11" cy="11" r="8"/>
                         <line x1="21" y1="21" x2="16.65" y2="16.65"/>
@@ -94,40 +98,79 @@
                 </button>
             </div>
         </form>
+
         {% with messages = get_flashed_messages(with_categories=true) %}
-          {% if messages %}
-            {% for category, message in messages %}
-              <div class="{{ category }}">{{ message }}</div>
-            {% endfor %}
-          {% endif %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="{{ category }}">{{ message }}</div>
+                {% endfor %}
+            {% endif %}
         {% endwith %}
 
-        <div class="results-row">
-            <div class="result-field">
-                <span class="result-label">Hostname</span>
-                <span class="result-value">{{ fields.host or '-' }}</span>
+        <form method="post" action="{{ url_for('change_vlan') }}">
+            <input type="hidden" name="host" value="{{ fields.host }}">
+
+            <div class="results-row">
+                <div class="result-field">
+                    <span class="result-label">Hostname</span>
+                    <span class="result-value">{{ fields.host or '-' }}</span>
+                </div>
+
+                <div class="result-field">
+    <span class="result-label">Interface</span>
+    {% if fields.available_interfaces %}
+        <select class="result-value" name="interface" required>
+            {% for iface in fields.available_interfaces %}
+                {# Use short name for value, long name for display #}
+                {% set short_name = iface|replace('GigabitEthernet', 'Gi')|replace('FastEthernet', 'Fa') %}
+                <option value="{{ short_name }}" 
+                    {% if short_name == fields.interface %}selected{% endif %}>
+                    {{ iface }}  {# Display full name #}
+                </option>
+            {% endfor %}
+        </select>
+    {% else %}
+        <span class="result-value">{{ fields.interface or '-' }}</span>
+    {% endif %}
+</div>
+
+                <div class="result-field">
+                    <span class="result-label">MAC Address</span>
+                    <span class="result-value">{{ fields.mac_address or '-' }}</span>
+                </div>
+
+                <div class="result-field">
+                    <span class="result-label">VLAN</span>
+                    {% if fields.available_vlans %}
+                        <select class="result-value" name="new_vlan" required>
+                            {% for vlan_id in fields.available_vlans %}
+                                <option value="{{ vlan_id }}" {% if vlan_id == fields.vlan %}selected{% endif %}>{{ vlan_id }}</option>
+                            {% endfor %}
+                        </select>
+                    {% else %}
+                        <span class="result-value">{{ fields.vlan or '-' }}</span>
+                    {% endif %}
+                </div>
+
+                <div class="result-field">
+                    <span class="result-label">Description</span>
+                    <span class="result-value">{{ fields.description or '-' }}</span>
+                </div>
+
+                <div class="result-field">
+                    <span class="result-label">SNMP Location</span>
+                    <span class="result-value">{{ fields.snmp_location or '-' }}</span>
+                </div>
             </div>
-            <div class="result-field">
-                <span class="result-label">Interface</span>
-                <span class="result-value">{{ fields.interface or '-' }}</span>
+
+            {% if fields.available_vlans %}
+            <div style="margin-top: 16px; text-align: center;">
+                <button type="submit" style="padding: 10px 20px; font-size: 16px; background-color: #28a745; color: white; border: none; border-radius: 6px; cursor: pointer;">
+                    Submit VLAN Change
+                </button>
             </div>
-            <div class="result-field">
-                <span class="result-label">MAC Address</span>
-                <span class="result-value">{{ fields.mac_address or '-' }}</span>
-            </div>
-            <div class="result-field">
-                <span class="result-label">VLAN</span>
-                <span class="result-value">{{ fields.vlan or '-' }}</span>
-            </div>
-            <div class="result-field">
-                <span class="result-label">Description</span>
-                <span class="result-value">{{ fields.description or '-' }}</span>
-            </div>
-            <div class="result-field">
-                <span class="result-label">SNMP Location</span>
-                <span class="result-value">{{ fields.snmp_location or '-' }}</span>
-            </div>
-        </div>
+            {% endif %}
+        </form>
     </div>
 </body>
 </html>
