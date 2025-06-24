@@ -7,6 +7,9 @@ from nornir_napalm.plugins.tasks import napalm_get, napalm_configure
 from network_lookup import expand_interface
 from nornir_netmiko.tasks import netmiko_send_command
 from nornir_netmiko.tasks import netmiko_send_config
+from network_lookup import find_mac, find_port_description, find_host
+
+
 nr = InitNornir(config_file="config.yaml")
 
 
@@ -46,6 +49,18 @@ def search():
 
     mac_regex = r"^([0-9A-Fa-f]{2}([:\-\.]?)){5}[0-9A-Fa-f]{2}$"
 
+    # 1. Hostname search (case-insensitive)
+    hostnames = [h.lower() for h in nr.inventory.hosts.keys()]
+    if query.lower() in hostnames:
+        result = find_host(query)
+        if result:
+            fields.update(result)
+            flash(f"Hostname found: {result['host']}", "success")
+        else:
+            flash("Hostname not found.", "error")
+        return render_template("index.html", fields=fields)
+
+    # 2. MAC address search
     if re.match(mac_regex, query):
         result = find_mac(query)
         if result:
@@ -63,6 +78,7 @@ def search():
         else:
             flash("MAC address not found.", "error")
 
+    # 3. Port description search
     else:
         matches = find_port_description(query)
         if matches:

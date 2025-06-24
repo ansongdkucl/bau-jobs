@@ -17,6 +17,35 @@ def expand_interface(short_name):
             return short_name.replace(short, long, 1)
     return short_name
 
+def find_host(hostname):
+    """
+    Returns details for a host if the hostname matches an inventory entry.
+    """
+    host_obj = nr.inventory.hosts.get(hostname)
+    if not host_obj:
+        return {}
+
+    # You can fetch more details if desired, e.g. via napalm_get
+    result = nr.filter(name=hostname).run(task=napalm_get, getters=["interfaces", "get_snmp_information", "get_vlans"])
+    task_result = list(result.values())[0]
+    interfaces = task_result.result.get("interfaces", {})
+    snmp_info = task_result.result.get("get_snmp_information", {})
+    vlan_info = task_result.result.get("get_vlans", {})
+    snmp_location = snmp_info.get("location", "")
+
+    return {
+        "host": hostname,
+        "interface": "",
+        "mac_address": "",
+        "vlan": "",
+        "available_vlans": list(vlan_info.keys()),
+        "available_interfaces": list(interfaces.keys()),
+        "description": "",
+        "snmp_location": snmp_location
+    }
+
+
+
 def find_mac(mac_address):
     mac_address_search = mac_address.lower()
     result = nr.run(task=napalm_get, getters=["mac_address_table", "interfaces", "get_snmp_information", "get_vlans"])
