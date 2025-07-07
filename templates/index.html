@@ -3,174 +3,94 @@
 <head>
     <meta charset="UTF-8">
     <title>Network Search</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <style>
-        body { font-family: Arial, sans-serif; background: #f8f8f8; }
-        .container { max-width: 1200px; margin: 40px auto; background: #fff; border-radius: 8px; box-shadow: 0 2px 8px #ddd; padding: 32px; }
-        h1 { text-align: center; margin-bottom: 32px; }
-        .search-bar-row {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin-bottom: 36px;
-        }
-        .search-bar-row input[type="search"] {
-            padding: 12px 16px;
-            font-size: 18px;
-            border: 1px solid #ccc;
-            border-radius: 24px 0 0 24px;
-            outline: none;
-            width: 350px;
-            transition: border-color 0.2s;
-        }
-        .search-bar-row input[type="search"]:focus {
-            border-color: #007bff;
-        }
-        .search-bar-row button {
-            background: #007bff;
-            color: #fff;
-            border: none;
-            padding: 12px 20px;
-            border-radius: 0 24px 24px 0;
-            font-size: 18px;
-            cursor: pointer;
-            transition: background 0.2s;
-            display: flex;
-            align-items: center;
-            height: 48px;
-        }
-        .search-bar-row button:hover {
-            background: #0056b3;
-        }
-        .results-row {
-            display: flex;
-            gap: 20px;
-            margin-top: 24px;
-            justify-content: space-between;
-            flex-wrap: wrap;
-            background: #f6f8fa;
-            border-radius: 8px;
-            padding: 20px 10px;
-        }
-        .result-field {
-            display: flex;
-            flex-direction: column;
-            align-items: flex-start;
-            min-width: 120px;
-            flex: 1 1 120px;
-        }
-        .result-label {
-            font-size: 13px;
-            color: #888;
-            margin-bottom: 2px;
-        }
-        .result-value {
-            font-size: 17px;
-            color: #222;
-            font-weight: bold;
-            word-break: break-word;
-        }
-        select.result-value {
-            font-weight: normal;
-            font-size: 15px;
-            padding: 6px;
-        }
-        .error, .success { text-align: center; margin-bottom: 16px; }
-        .error { color: #b30000; }
-        .success { color: #008000; }
-        @media (max-width: 900px) {
-            .results-row { flex-direction: column; gap: 10px; }
-            .result-field { min-width: 0; }
-        }
-    </style>
 </head>
 <body>
-    <div class="container">
-        <h1>Network Search</h1>
-        <form method="post" action="{{ url_for('search') }}">
-            <div class="search-bar-row">
-                <input type="search" id="query" name="query" placeholder="Enter MAC address or port description..." required>
-                <button type="submit" title="Search">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                        <circle cx="11" cy="11" r="8"/>
-                        <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-                    </svg>
-                </button>
-            </div>
-        </form>
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+    {% for category, message in messages %}
+      <div class="flash {{ category }}">{{ message }}</div>
+    {% endfor %}
+  {% endif %}
+{% endwith %}
 
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                {% for category, message in messages %}
-                    <div class="{{ category }}">{{ message }}</div>
-                {% endfor %}
-            {% endif %}
-        {% endwith %}
+<form method="POST" action="/search">
+    <label for="query">Search</label>
+    <input type="text" id="query" name="query" placeholder="Hostname, MAC, or Description">
+    <button type="submit">Search</button>
+</form>
 
-        <form method="post" action="{{ url_for('change_vlan') }}">
-            <input type="hidden" name="host" value="{{ fields.host }}">
-
-            <div class="results-row">
-                <div class="result-field">
-                    <span class="result-label">Hostname</span>
-                    <span class="result-value">{{ fields.host or '-' }}</span>
-                </div>
-
-                <div class="result-field">
-    <span class="result-label">Interface</span>
-    {% if fields.available_interfaces %}
-        <select class="result-value" name="interface" required>
-            {% for iface in fields.available_interfaces %}
-                {# Use short name for value, long name for display #}
-                {% set short_name = iface|replace('GigabitEthernet', 'Gi')|replace('FastEthernet', 'Fa') %}
-                <option value="{{ short_name }}" 
-                    {% if short_name == fields.interface %}selected{% endif %}>
-                    {{ iface }}  {# Display full name #}
-                </option>
-            {% endfor %}
-        </select>
-    {% else %}
-        <span class="result-value">{{ fields.interface or '-' }}</span>
-    {% endif %}
-</div>
-
-                <div class="result-field">
-                    <span class="result-label">MAC Address</span>
-                    <span class="result-value">{{ fields.mac_address or '-' }}</span>
-                </div>
-
-                <div class="result-field">
-                    <span class="result-label">VLAN</span>
-                    {% if fields.available_vlans %}
-                        <select class="result-value" name="new_vlan" required>
-                            {% for vlan_id in fields.available_vlans %}
-                                <option value="{{ vlan_id }}" {% if vlan_id == fields.vlan %}selected{% endif %}>{{ vlan_id }}</option>
-                            {% endfor %}
-                        </select>
-                    {% else %}
-                        <span class="result-value">{{ fields.vlan or '-' }}</span>
-                    {% endif %}
-                </div>
-
-                <div class="result-field">
-                    <span class="result-label">Description</span>
-                    <span class="result-value">{{ fields.description or '-' }}</span>
-                </div>
-
-                <div class="result-field">
-                    <span class="result-label">SNMP Location</span>
-                    <span class="result-value">{{ fields.snmp_location or '-' }}</span>
-                </div>
-            </div>
-
-            {% if fields.available_vlans %}
-            <div style="margin-top: 16px; text-align: center;">
-                <button type="submit" style="padding: 10px 20px; font-size: 16px; background-color: #28a745; color: white; border: none; border-radius: 6px; cursor: pointer;">
-                    Submit VLAN Change
-                </button>
-            </div>
-            {% endif %}
-        </form>
+<form method="POST" action="/change_vlan">
+    <div>
+        <label>Hostname</label>
+        <span>{{ fields.host or '-' }}</span>
+        <input type="hidden" name="host" value="{{ fields.host }}">
     </div>
+
+    <div>
+        <label for="interface">Interface</label>
+        {% if fields.available_interfaces %}
+            {% set current_short = fields.interface|replace('GigabitEthernet', 'Gi')|replace('FastEthernet', 'Fa') %}
+            <select name="interface" id="interface" onchange="this.form.submit()">
+                {% for iface in fields.available_interfaces %}
+                    {% set short_name = iface|replace('GigabitEthernet', 'Gi')|replace('FastEthernet', 'Fa') %}
+                    <option value="{{ short_name }}"
+                        {% if short_name == (requested_interface or current_short) %}selected{% endif %}>
+                        {{ iface }}
+                    </option>
+                {% endfor %}
+            </select>
+        {% else %}
+            <span>{{ fields.interface or '-' }}</span>
+            <input type="hidden" name="interface" value="{{ fields.interface }}">
+        {% endif %}
+    </div>
+
+    <div>
+        <label>MAC Address</label>
+        <span>{{ fields.mac_address or '-' }}</span>
+    </div>
+
+    <div>
+        <label>VLAN</label>
+        {% if fields.available_vlans %}
+            <div>
+                <strong>Current VLAN - </strong>
+                <span>{{ fields.vlan or 'N/A' }}</span>
+            </div>
+            <select name="new_vlan" id="new_vlan">
+                {% for vlan_id in fields.available_vlans %}
+                    {% set is_selected = vlan_id|string == (requested_vlan or fields.vlan)|string %}
+                    <option value="{{ vlan_id }}" {% if is_selected %}selected{% endif %}>{{ vlan_id }}</option>
+                {% endfor %}
+            </select>
+            <input type="hidden" name="current_vlan" value="{{ fields.vlan }}">
+        {% else %}
+            <span>{{ fields.vlan or '-' }}</span>
+            <input type="hidden" name="new_vlan" value="{{ fields.vlan }}">
+        {% endif %}
+    </div>
+
+    <div>
+        <label>Description</label>
+        <span>{{ fields.description or '-' }}</span>
+    </div>
+
+    <div>
+        <label>SNMP Location</label>
+        <span>{{ fields.snmp_location or '-' }}</span>
+    </div>
+
+    {% if confirmation_message %}
+        <div class="confirmation">{{ confirmation_message|safe }}</div>
+        <input type="hidden" name="confirm" value="1">
+        <button type="submit">Confirm VLAN Change</button>
+    {% elif fields.available_vlans %}
+        <button type="submit" name="change_vlan" value="1">Submit VLAN Change</button>
+    {% endif %}
+
+    {% if success_message %}
+        <div class="success">{{ success_message|safe }}</div>
+    {% endif %}
+</form>
 </body>
 </html>

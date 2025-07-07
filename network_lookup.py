@@ -1,121 +1,141 @@
 from nornir import InitNornir
 from nornir_napalm.plugins.tasks import napalm_get
-from nornir_netmiko.tasks import netmiko_send_command
 
 nr = InitNornir(config_file="config.yaml")
 
+INTERFACE_MAP = {
+    "Gi": "GigabitEthernet",
+    "Fa": "FastEthernet",
+    "Te": "TenGigabitEthernet",
+    "Vl": "Vlan",
+    "Eth": "Ethernet"
+}
+
 def expand_interface(short_name):
-    mapping = {
-        "Gi": "GigabitEthernet",
-        "Fa": "FastEthernet",
-        "Te": "TenGigabitEthernet",
-        "Vl": "Vlan",
-        "Eth": "Ethernet",
-    }
-    for short, long in mapping.items():
+    for short, long in INTERFACE_MAP.items():
         if short_name.startswith(short):
             return short_name.replace(short, long, 1)
     return short_name
 
-def find_host(hostname):
-    """
-    Returns details for a host if the hostname matches an inventory entry.
-    """
-    host_obj = nr.inventory.hosts.get(hostname)
-    if not host_obj:
-        return {}
+def get_interface_vlan_from_vlans(interface, vlan_info):
+    for vlan_id, vlan_data in vlan_info.items():
+        if interface in vlan_data.get("interfaces", []):
+            return str(vlan_id)
+    return ""
 
-    # You can fetch more details if desired, e.g. via napalm_get
-    result = nr.filter(name=hostname).run(task=napalm_get, getters=["interfaces", "get_snmp_information", "get_vlans"])
-    task_result = list(result.values())[0]
-    interfaces = task_result.result.get("interfaces", {})
-    snmp_info = task_result.result.get("get_snmp_information", {})
-    vlan_info = task_result.result.get("get_vlans", {})
-    snmp_location = snmp_info.get("location", "")
+def get_interface_vlan_from_vlans(interface, vlan_info):
+    """
+    Given an interface name and the get_vlans() result,
+    return the VLAN ID (as string) that includes this interface.
+    """
+    for vlan_id, vlan_data in vlan_info.items():
+        if interface in vlan_data.get("interfaces", []):
+            return str(vlan_id)
+    return ""
 
+def get_interface_details(host, interface):
+    filtered = nr.filter(name=host)
+    result = filtered.run(
+        task=napalm_get,
+        getters=["mac_address_table", "interfaces", "get_snmp_information", "get_vlans"]
+    )
+    result_values = list(result.values())
+    if not result_values:
+        return {
+            "host": host,
+            "interface": interface,
+            "mac_address": "",
+            "vlan": "",
+            "available_vlans": [],
+            "available_interfaces": [],
+            "description": "",
+            "snmp_location": "",
+            "error": f"No Nornir result for host '{host}'."
+        }
+    task_result = result_values[0].result
+    interfaces = task_result.get("interfaces", {})
+    vlan_info = task_result.get("get_vlans", {})
+    mac_entry = next(
+        (entry for entry in task_result.get("mac_address_table", [])
+         if entry["interface"] == interface),
+        None
+    )
+    iface_details = interfaces.get(interface, {})
+    # Use VLAN mapping from get_vlans()
+    vlan = get_interface_vlan_from_vlans(interface, vlan_info)
     return {
-        "host": hostname,
-        "interface": "",
-        "mac_address": "",
-        "vlan": "",
-        "available_vlans": list(vlan_info.keys()),
+        "host": host,
+        "interface": interface,
+        "mac_address": mac_entry["mac"] if mac_entry else "",
+        "vlan": vlan,
+        "available_vlans": [str(v) for v in vlan_info.keys()],
         "available_interfaces": list(interfaces.keys()),
-        "description": "",
-        "snmp_location": snmp_location
+        "description": iface_details.get("description", ""),
+        "snmp_location": task_result.get("get_snmp_information", {}).get("location", "")
     }
 
 
 
+
 def find_mac(mac_address):
-    mac_address_search = mac_address.lower()
-    result = nr.run(task=napalm_get, getters=["mac_address_table", "interfaces", "get_snmp_information", "get_vlans"])
-    
-    for host, task_result in result.items():
-        mac_table = task_result.result.get("mac_address_table", [])
-        interfaces = task_result.result.get("interfaces", {})
-        snmp_info = task_result.result.get("get_snmp_information", {})
-        vlan_info = task_result.result.get("get_vlans", {})
-        snmp_location = snmp_info.get("location", "")
-
-        available_interfaces = list(interfaces.keys())
-
-        matches = [entry for entry in mac_table if mac_address_search in entry["mac"].lower()]
+    mac_search = mac_address.lower()
+    for host, task_result in nr.run(
+        task=napalm_get,
+        getters=["mac_address_table", "interfaces", "get_snmp_information", "get_vlans"]
+    ).items():
+        result_data = task_result.result
+        if not isinstance(result_data, dict):
+            continue
+        mac_table = result_data.get("mac_address_table", [])
+        matches = [entry for entry in mac_table if mac_search in entry["mac"].lower()]
         if matches:
-            short_name = matches[0]['interface']
-            long_name = expand_interface(short_name)
-            description = interfaces.get(long_name, {}).get('description', '')
-            vlan = matches[0].get('vlan', '')
-            available_vlans = list(vlan_info.keys())
-        
-        # Return BOTH short and long interface names
-        return {
-            "host": host,
-            "interface": short_name,  # Keep short name for display consistency
-            "interface_long": long_name,  # Add long name for backend
-            "mac_address": mac_address,
-            "vlan": vlan,
-            "available_vlans": available_vlans,
-            "description": description,
-            "snmp_location": snmp_location,
-            "available_interfaces": available_interfaces  # ADD THIS LINE
-        }
+            interface_short = matches[0]['interface']
+            interface_long = expand_interface(interface_short)
+            interfaces = result_data.get("interfaces", {})
+            return {
+                "host": host,
+                "interface": interface_long,
+                "mac_address": mac_address,
+                "vlan": matches[0].get("vlan", ""),
+                "available_vlans": list(result_data.get("get_vlans", {}).keys()),
+                "available_interfaces": list(interfaces.keys()),
+                "description": interfaces.get(interface_long, {}).get("description", ""),
+                "snmp_location": result_data.get("get_snmp_information", {}).get("location", "")
+            }
     return {}
 
-def find_port_description(description_search):
-    """
-    Search for interfaces with matching descriptions across all devices.
-    Returns a list of dicts: {host, interface, description}
-    """
-    result = nr.run(task=napalm_get, getters=["get_interfaces"])
+def find_port_description(search_term):
     matches = []
-    for host, task_result in result.items():
-        if not task_result.failed:
-            interfaces = task_result.result.get("get_interfaces", {})
-            for iface, data in interfaces.items():
-                desc = data.get('description', '')
-                if desc and description_search.lower() in desc.lower():
-                    matches.append({
-                        "host": host,
-                        "interface": iface,
-                        "description": desc
-                    })
+    for host, task_result in nr.run(task=napalm_get, getters=["interfaces"]).items():
+        result_data = task_result.result
+        if not isinstance(result_data, dict):
+            continue
+        interfaces = result_data.get("interfaces", {})
+        for iface, data in interfaces.items():
+            if search_term.lower() in data.get('description', '').lower():
+                matches.append({
+                    "host": host,
+                    "interface": iface,
+                    "description": data.get('description', '')
+                })
     return matches
 
-def get_full_details_for_interface(host, interface):
-    """
-    Given a host and interface, returns (mac_address, vlan, snmp_location).
-    """
-    result = nr.filter(name=host).run(task=napalm_get, getters=["mac_address_table", "interfaces", "get_snmp_information"])
-    mac_address = ""
-    vlan = ""
-    snmp_location = ""
-    for _, task_result in result.items():
-        mac_table = task_result.result.get("mac_address_table", [])
-        snmp_info = task_result.result.get("get_snmp_information", {})
-        snmp_location = snmp_info.get("location", "")
-        for entry in mac_table:
-            if entry["interface"] == interface:
-                mac_address = entry["mac"]
-                vlan = entry.get("vlan", "")
-                break
-    return mac_address, vlan, snmp_location
+def find_host(hostname):
+    if hostname not in nr.inventory.hosts:
+        return {}
+    result = nr.filter(name=hostname).run(
+        task=napalm_get,
+        getters=["interfaces", "get_snmp_information", "get_vlans"]
+    )
+    result_values = list(result.values())
+    if not result_values:
+        return {}
+    task_result = result_values[0].result
+    if not isinstance(task_result, dict):
+        return {}
+    return {
+        "host": hostname,
+        "available_vlans": list(task_result.get("get_vlans", {}).keys()),
+        "available_interfaces": list(task_result.get("interfaces", {}).keys()),
+        "snmp_location": task_result.get("get_snmp_information", {}).get("location", "")
+    }

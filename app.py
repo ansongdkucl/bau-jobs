@@ -1,45 +1,26 @@
-import re
 from flask import Flask, render_template, request, flash, redirect, url_for
-from network_lookup import find_mac, find_port_description
-from nornir import InitNornir
-from nornir.core.filter import F  # Needed for filtering
-from nornir_napalm.plugins.tasks import napalm_get, napalm_configure
-from network_lookup import expand_interface
-from nornir_netmiko.tasks import netmiko_send_command
-from nornir_netmiko.tasks import netmiko_send_config
-from network_lookup import find_mac, find_port_description, find_host
-
-
-nr = InitNornir(config_file="config.yaml")
-
+from network_lookup import expand_interface, get_interface_details, find_mac, find_port_description, find_host
+import re
 
 app = Flask(__name__)
+app.secret_key = "supersecret"
+
+MAC_REGEX = r"^([0-9A-Fa-f]{2}([:\-\.]?)){5}[0-9A-Fa-f]{2}$"
 
 @app.route("/", methods=["GET"])
 def index():
-    # You can set up a default empty fields dict
-    fields = {
-        "host": "",
-        "interface": "",
-        "mac_address": "",
-        "vlan": "",
-        "description": "",
-        "snmp_location": ""
-    }
-    return render_template("index.html", fields=fields)
-
+    return render_template("index.html", fields={
+        "host": "", "interface": "", "mac_address": "", "vlan": "",
+        "description": "", "snmp_location": "", "available_vlans": [],
+        "available_interfaces": []
+    })
 
 @app.route("/search", methods=["POST"])
 def search():
     query = request.form.get("query", "").strip()
     fields = {
-        "host": "",
-        "interface": "",
-        "mac_address": "",
-        "vlan": "",
-        "description": "",
-        "snmp_location": "",
-        "available_vlans": [],
+        "host": "", "interface": "", "mac_address": "", "vlan": "",
+        "description": "", "snmp_location": "", "available_vlans": [],
         "available_interfaces": []
     }
 
@@ -47,100 +28,124 @@ def search():
         flash("Please enter a search value.", "error")
         return render_template("index.html", fields=fields)
 
-    mac_regex = r"^([0-9A-Fa-f]{2}([:\-\.]?)){5}[0-9A-Fa-f]{2}$"
-
-    # 1. Hostname search (case-insensitive)
-    hostnames = [h.lower() for h in nr.inventory.hosts.keys()]
-    if query.lower() in hostnames:
+    # Hostname search
+    if query.lower() in [h.lower() for h in find_host.__globals__['nr'].inventory.hosts.keys()]:
         result = find_host(query)
         if result:
-            fields.update(result)
+            fields = {
+                "host": result.get("host", ""),
+                "interface": "",
+                "mac_address": "",
+                "vlan": "",
+                "description": "",
+                "snmp_location": result.get("snmp_location", ""),
+                "available_vlans": result.get("available_vlans", []),
+                "available_interfaces": result.get("available_interfaces", [])
+            }
             flash(f"Hostname found: {result['host']}", "success")
         else:
             flash("Hostname not found.", "error")
         return render_template("index.html", fields=fields)
 
-    # 2. MAC address search
-    if re.match(mac_regex, query):
+    # MAC address search
+    if re.match(MAC_REGEX, query):
         result = find_mac(query)
         if result:
-            fields.update({
-                "host": result.get("host", ""),
-                "interface": result.get("interface", ""),
-                "mac_address": query,
-                "vlan": result.get("vlan", ""),
-                "description": result.get("description", ""),
-                "snmp_location": result.get("snmp_location", ""),
-                "available_vlans": result.get("available_vlans", []),
-                "available_interfaces": result.get("available_interfaces", [])
-            })
+            fields.update(result)
             flash(f"MAC found on {result['host']} {result['interface']}", "success")
         else:
             flash("MAC address not found.", "error")
+        return render_template("index.html", fields=fields)
 
-    # 3. Port description search
+    # Port description search
+    matches = find_port_description(query)
+    if matches:
+        details = get_interface_details(matches[0]['host'], matches[0]['interface'])
+        fields.update(details)
+        flash(f"Description found: {matches[0]['host']} ({matches[0]['interface']}): {matches[0]['description']}", "success")
     else:
-        matches = find_port_description(query)
-        if matches:
-            m = matches[0]
-            fields.update({
-                "host": m.get("host", ""),
-                "interface": m.get("interface", ""),
-                "mac_address": "",
-                "vlan": "",
-                "description": m.get("description", ""),
-                "snmp_location": ""
-            })
-            flash(f"Description found: {m['host']} ({m['interface']}): {m['description']}", "success")
-        else:
-            flash("No matching port description found.", "error")
+        flash("No matching port description found.", "error")
 
     return render_template("index.html", fields=fields)
-
-
 
 @app.route("/change_vlan", methods=["POST"])
 def change_vlan():
     host = request.form.get("host")
-    interface = request.form.get("interface")
+    interface_short = request.form.get("interface")
     new_vlan = request.form.get("new_vlan")
+    current_vlan = request.form.get("current_vlan")
+    requested_interface = interface_short  # For template rendering
 
-    fields = {
-        "host": host,
-        "interface": interface,
-        "mac_address": "",
-        "vlan": new_vlan,
-        "description": "",
-        "snmp_location": "",
-        "available_vlans": []
-    }
+    interface = expand_interface(interface_short)
 
-    if not all([host, interface, new_vlan]):
+    # If the VLAN change button was NOT pressed, this is just an interface change
+    if "change_vlan" not in request.form:
+        fields = get_interface_details(host, interface)
+        if fields:
+            # Set the VLAN in the dropdown to match the interface's current VLAN
+            new_vlan = fields.get('vlan', '')
+            flash(f"Showing details for interface {interface_short}", "success")
+            return render_template(
+                "index.html",
+                fields=fields,
+                requested_interface=interface_short,
+                requested_vlan=new_vlan
+            )
+        else:
+            flash(f"Could not get details for interface {interface_short}", "error")
+            return redirect(url_for('index'))
+
+    # If the VLAN change button WAS pressed, proceed with VLAN change logic
+    fields = get_interface_details(host, interface)
+
+    if not all([host, interface_short, new_vlan]):
         flash("Missing data for VLAN change.", "error")
         return render_template("index.html", fields=fields)
 
-    # Filter to the specific host
-    target = nr.filter(F(name=host))
+    # If confirmation is not present, prompt for confirmation
+    confirm = request.form.get("confirm")
+    if not confirm:
+        confirmation_message = (
+            f"You have requested to change VLAN for host <b>{host}</b> "
+            f"on interface <b>{interface_short}</b> to VLAN <b>{new_vlan}</b>."
+        )
+        return render_template(
+            "index.html",
+            fields=fields,
+            confirmation_message=confirmation_message,
+            requested_vlan=new_vlan,
+            requested_interface=interface_short
+        )
 
-    # Build interface command (Cisco syntax)
-    intf_full = expand_interface(interface)
+    # If confirmation is present, perform the VLAN change
+    from nornir.core.filter import F
+    from nornir_netmiko.tasks import netmiko_send_config
+    target = find_host.__globals__['nr'].filter(F(name=host))
     cmds = [
-        f"interface {intf_full}",
+        f"interface {interface}",
         f"switchport access vlan {new_vlan}",
         "exit"
     ]
-
     result = target.run(task=netmiko_send_config, config_commands=cmds)
     task = list(result.values())[0]
+    print(f"Task result: {task.result}")
 
     if task.failed:
+        print(f"Failed to change VLAN: {task.result}")
         flash(f"Failed to change VLAN: {task.result}", "error")
-    else:
-        flash(f"Successfully changed {intf_full} to VLAN {new_vlan} on {host}", "success")
+        return render_template("index.html", fields=fields)
 
-    return render_template("index.html", fields=fields)
-
+    # Refresh actual data from device
+    updated_fields = get_interface_details(host, interface)
+    success_message = (
+        f"You have successfully changed host <b>{host}</b> "
+        f"on interface <b>{interface_short}</b> to VLAN <b>{new_vlan}</b>."
+    )
+    return render_template(
+        "index.html",
+        fields=updated_fields,
+        success_message=success_message
+    )
 
 if __name__ == "__main__":
-    app.secret_key = "supersecret"
-    app.run(debug=True, port=5000)
+    app.run(debug=True, port=5005)
