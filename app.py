@@ -1,8 +1,44 @@
 from flask import Flask, render_template, request, flash, redirect, url_for
 from network_lookup import expand_interface, get_interface_details, find_mac, find_port_description, find_host
+from nornir_netmiko.tasks import netmiko_send_config, netmiko_send_command
+import logging
+import sys
+from logging.handlers import RotatingFileHandler
 import re
 
+
+
 app = Flask(__name__)
+
+# Configure logging to file and redirect stdout/stderr
+log_file = "network_debug.log"
+
+handler = RotatingFileHandler(log_file, maxBytes=5*1024*1024, backupCount=3)
+handler.setLevel(logging.DEBUG)
+formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+handler.setFormatter(formatter)
+
+app.logger.addHandler(handler)
+app.logger.setLevel(logging.DEBUG)
+
+# Redirect stdout and stderr to logger
+class StreamToLogger:
+    def __init__(self, logger, level):
+        self.logger = logger
+        self.level = level
+        self.linebuf = ''
+
+    def write(self, message):
+        if message.strip() != "":
+            self.logger.log(self.level, message.strip())
+
+    def flush(self):
+        pass  # Needed for compatibility with sys.stdout
+
+sys.stdout = StreamToLogger(app.logger, logging.INFO)
+sys.stderr = StreamToLogger(app.logger, logging.ERROR)
+
+
 app.secret_key = "supersecret"
 
 MAC_REGEX = r"^([0-9A-Fa-f]{2}([:\-\.]?)){5}[0-9A-Fa-f]{2}$"
@@ -120,32 +156,53 @@ def change_vlan():
     # If confirmation is present, perform the VLAN change
     from nornir.core.filter import F
     from nornir_netmiko.tasks import netmiko_send_config
+    from pprint import pprint
+
+
     target = find_host.__globals__['nr'].filter(F(name=host))
+
     cmds = [
         f"interface {interface}",
         f"switchport access vlan {new_vlan}",
         "exit"
     ]
-    result = target.run(task=netmiko_send_config, config_commands=cmds)
-    task = list(result.values())[0]
-    print(f"Task result: {task.result}")
+
+    # Send config and capture output
+    config_result = target.run(task=netmiko_send_config, config_commands=cmds)
+    task = list(config_result.values())[0]
+    config_output = task.result
+
+    print("Netmiko config command output:")
+    print(config_output)
+
+    # Run 'show interfaces switchport' for the interface to verify VLAN
+    show_cmd = f"show interfaces {interface} switchport"
+    show_result = target.run(task=netmiko_send_command, command_string=show_cmd)
+    show_task = list(show_result.values())[0]
+    show_output = show_task.result
+
+    print("Netmiko show command output:")
+    print(show_output)
 
     if task.failed:
-        print(f"Failed to change VLAN: {task.result}")
-        flash(f"Failed to change VLAN: {task.result}", "error")
+        flash(f"Failed to change VLAN:<br><pre>{config_output}</pre>", "error")
         return render_template("index.html", fields=fields)
 
     # Refresh actual data from device
     updated_fields = get_interface_details(host, interface)
     success_message = (
         f"You have successfully changed host <b>{host}</b> "
-        f"on interface <b>{interface_short}</b> to VLAN <b>{new_vlan}</b>."
+        f"on interface <b>{interface_short}</b> to VLAN <b>{new_vlan}</b>.<br>"
+        f"<b>Device config output:</b><br><pre>{config_output}</pre>"
+        f"<b>Device show output:</b><br><pre>{show_output}</pre>"
     )
     return render_template(
         "index.html",
         fields=updated_fields,
         success_message=success_message
+        #netmiko_output=config_output
     )
 
+
 if __name__ == "__main__":
-    app.run(debug=True, port=5005)
+    app.run(debug=True, port=5002)

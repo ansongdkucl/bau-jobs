@@ -13,6 +13,13 @@
   {% endif %}
 {% endwith %}
 
+{% if netmiko_output %}
+  <div class="netmiko-output">
+    <strong>Netmiko Config Command Output:</strong>
+    <pre>{{ netmiko_output }}</pre>
+  </div>
+{% endif %}
+
 <form method="POST" action="/search">
     <label for="query">Search</label>
     <input type="text" id="query" name="query" placeholder="Hostname, MAC, or Description">
@@ -83,6 +90,7 @@
     {% if confirmation_message %}
         <div class="confirmation">{{ confirmation_message|safe }}</div>
         <input type="hidden" name="confirm" value="1">
+        <input type="hidden" name="change_vlan" value="1">  <!-- ADD THIS -->
         <button type="submit">Confirm VLAN Change</button>
     {% elif fields.available_vlans %}
         <button type="submit" name="change_vlan" value="1">Submit VLAN Change</button>
