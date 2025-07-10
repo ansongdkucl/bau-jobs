@@ -89,27 +89,33 @@ def find_port_description(search_term):
     return matches
 
 def find_host(hostname):
-    logging.debug(f"Looking up host: {hostname}")
+    logging.debug(f"Starting find_host for: {hostname}")
+    
     if hostname not in nr.inventory.hosts:
-        logging.warning(f"Host not found in inventory: {hostname}")
+        logging.warning(f"Host '{hostname}' not found in inventory.")
         return {}
 
     try:
         filtered = nr.filter(name=hostname)
+        logging.debug(f"Filtered inventory for host: {hostname}")
+
         result = filtered.run(
             task=napalm_get,
             getters=["interfaces", "get_snmp_information", "get_vlans"]
         )
         task_result = list(result.values())[0].result
+        logging.debug(f"NAPALM get result received for {hostname}")
 
         interfaces = task_result.get("interfaces", {})
         vlan_info = task_result.get("get_vlans", {})
+        logging.debug(f"Found {len(interfaces)} interfaces and {len(vlan_info)} VLANs")
 
         switchport_output = filtered.run(
             task=netmiko_send_command,
             command_string="show interfaces switchport"
         )
         switchport_raw = list(switchport_output.values())[0].result
+        logging.debug(f"Raw switchport output retrieved")
 
         valid_interfaces = []
         current_iface = None
@@ -119,16 +125,26 @@ def find_host(hostname):
             line = line.strip()
             if line.startswith("Name:"):
                 current_iface = line.split("Name:")[1].strip()
+                logging.debug(f"Parsing interface block: {current_iface}")
                 mode = None
             elif "Operational Mode:" in line and current_iface:
                 mode = line.split("Operational Mode:")[1].strip().lower()
+                logging.debug(f"Interface {current_iface} operational mode: {mode}")
 
-                if current_iface.lower().startswith("po") or mode == "trunk":
+                if current_iface.lower().startswith("po"):
+                    logging.debug(f"Excluded {current_iface} — Port-channel")
+                    current_iface = None
+                    continue
+                if mode == "trunk":
+                    logging.debug(f"Excluded {current_iface} — trunk mode")
                     current_iface = None
                     continue
 
+                logging.debug(f"Included valid access interface: {current_iface}")
                 valid_interfaces.append(current_iface)
                 current_iface = None
+
+        logging.debug(f"Valid access interfaces found: {valid_interfaces}")
 
         return {
             "host": hostname,
@@ -138,8 +154,9 @@ def find_host(hostname):
         }
 
     except Exception as e:
-        logging.exception(f"Error looking up host: {hostname}")
+        logging.exception(f"Exception during find_host({hostname}): {e}")
         return {}
+
 
 def get_interface_details(host, interface):
     logging.debug(f"Getting interface details for {host} - {interface}")

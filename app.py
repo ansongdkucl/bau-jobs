@@ -1,11 +1,11 @@
-from flask import Flask, render_template, request, flash, redirect, url_for
+from flask import Flask, render_template, request, flash
 from network_lookup import (
-    expand_interface, 
-    get_interface_details, 
-    find_mac, 
-    find_port_description, 
+    expand_interface,
+    get_interface_details,
+    find_mac,
+    find_port_description,
     find_host,
-    nr  # Import the initialized Nornir instance
+    nr
 )
 from nornir_netmiko.tasks import netmiko_send_config, netmiko_send_command
 from nornir.core.filter import F
@@ -14,11 +14,9 @@ import sys
 from logging.handlers import RotatingFileHandler
 import re
 
-# Initialize Flask application
 app = Flask(__name__)
 app.secret_key = "supersecret"
 
-# Configure logging
 log_file = "network_debug.log"
 handler = RotatingFileHandler(log_file, maxBytes=5*1024*1024, backupCount=3)
 handler.setLevel(logging.DEBUG)
@@ -27,7 +25,6 @@ handler.setFormatter(formatter)
 app.logger.addHandler(handler)
 app.logger.setLevel(logging.DEBUG)
 
-# Redirect stdout and stderr to logger
 class StreamToLogger:
     def __init__(self, logger, level):
         self.logger = logger
@@ -44,7 +41,6 @@ class StreamToLogger:
 sys.stdout = StreamToLogger(app.logger, logging.INFO)
 sys.stderr = StreamToLogger(app.logger, logging.ERROR)
 
-# MAC address validation regex
 MAC_REGEX = r"^([0-9A-Fa-f]{2}([:\-\.]?)){5}[0-9A-Fa-f]{2}$"
 
 @app.route("/", methods=["GET"])
@@ -78,26 +74,15 @@ def search():
         flash("Please enter a search value.", "error")
         return render_template("index.html", fields=fields)
 
-    # Hostname search
     if query.lower() in [h.lower() for h in nr.inventory.hosts.keys()]:
         result = find_host(query)
         if result:
-            fields = {
-                "host": result.get("host", ""),
-                "interface": "",
-                "mac_address": "",
-                "vlan": "",
-                "description": "",
-                "snmp_location": result.get("snmp_location", ""),
-                "available_vlans": result.get("available_vlans", []),
-                "available_interfaces": result.get("available_interfaces", [])
-            }
+            fields.update(result)
             flash(f"Hostname found: {result['host']}", "success")
         else:
             flash("Hostname not found.", "error")
         return render_template("index.html", fields=fields)
 
-    # MAC address search
     if re.match(MAC_REGEX, query):
         result = find_mac(query)
         if result:
@@ -107,7 +92,6 @@ def search():
             flash("MAC address not found.", "error")
         return render_template("index.html", fields=fields)
 
-    # Port description search
     matches = find_port_description(query)
     if matches:
         details = get_interface_details(matches[0]['host'], matches[0]['interface'])
@@ -126,14 +110,12 @@ def change_vlan():
     current_vlan = request.form.get("current_vlan")
     confirm = request.form.get("confirm")
 
-    # Expand interface and fetch details
     interface = expand_interface(interface_short)
     fields = get_interface_details(host, interface)
+    fields["interface"] = interface
 
-    # Keep track of requested VLAN to preserve dropdown state
     requested_vlan = new_vlan or fields.get('vlan', '')
 
-    # If this is not the final confirmation step yet
     if not request.form.get("change_vlan"):
         return render_template(
             "index.html",
@@ -142,7 +124,6 @@ def change_vlan():
             requested_vlan=requested_vlan
         )
 
-    # Validate the selected VLAN is in available list
     if not new_vlan or new_vlan not in [str(v) for v in fields.get('available_vlans', [])]:
         flash("Invalid VLAN selection", "error")
         return render_template(
@@ -152,7 +133,6 @@ def change_vlan():
             requested_vlan=requested_vlan
         )
 
-    # If not confirmed yet, prompt for confirmation
     if not confirm:
         confirmation_message = (
             f"You have requested to change VLAN for host <b>{host}</b> "
@@ -167,11 +147,8 @@ def change_vlan():
             requested_vlan=requested_vlan
         )
 
-    # If we get here, it's a confirmed VLAN change
     try:
         target = nr.filter(F(name=host))
-
-        # Log the change
         app.logger.info(f"Changing VLAN on {host} {interface} from {current_vlan} to {new_vlan}")
 
         cmds = [
@@ -192,13 +169,12 @@ def change_vlan():
                 requested_vlan=requested_vlan
             )
 
-        # Verify change
         show_cmd = f"show interfaces {interface} switchport"
         show_result = target.run(task=netmiko_send_command, command_string=show_cmd)
         show_output = list(show_result.values())[0].result
 
-        # Refresh interface details
         updated_fields = get_interface_details(host, interface)
+        updated_fields["interface"] = interface
 
         success_message = (
             f"Successfully changed VLAN on {host} interface {interface_short} "
@@ -226,5 +202,21 @@ def change_vlan():
             requested_vlan=requested_vlan
         )
 
+@app.route("/refresh-interface", methods=["POST"])
+def refresh_interface():
+    host = request.form.get("host")
+    interface_short = request.form.get("interface")
+    interface = expand_interface(interface_short)
+
+    fields = get_interface_details(host, interface)
+    fields["interface"] = interface
+
+    return render_template(
+        "index.html",
+        fields=fields,
+        requested_interface=interface_short,
+        requested_vlan=fields.get("vlan")
+    )
+
 if __name__ == "__main__":
-    app.run(debug=True, port=5009)
+    app.run(debug=True, port=5001)
