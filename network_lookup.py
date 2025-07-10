@@ -89,33 +89,27 @@ def find_port_description(search_term):
     return matches
 
 def find_host(hostname):
-    logging.debug(f"Starting find_host for: {hostname}")
-    
+    logging.debug(f"Looking up host: {hostname}")
     if hostname not in nr.inventory.hosts:
-        logging.warning(f"Host '{hostname}' not found in inventory.")
+        logging.warning(f"Host not found in inventory: {hostname}")
         return {}
 
     try:
         filtered = nr.filter(name=hostname)
-        logging.debug(f"Filtered inventory for host: {hostname}")
-
         result = filtered.run(
             task=napalm_get,
             getters=["interfaces", "get_snmp_information", "get_vlans"]
         )
         task_result = list(result.values())[0].result
-        logging.debug(f"NAPALM get result received for {hostname}")
 
         interfaces = task_result.get("interfaces", {})
         vlan_info = task_result.get("get_vlans", {})
-        logging.debug(f"Found {len(interfaces)} interfaces and {len(vlan_info)} VLANs")
 
         switchport_output = filtered.run(
             task=netmiko_send_command,
             command_string="show interfaces switchport"
         )
         switchport_raw = list(switchport_output.values())[0].result
-        logging.debug(f"Raw switchport output retrieved")
 
         valid_interfaces = []
         current_iface = None
@@ -125,26 +119,15 @@ def find_host(hostname):
             line = line.strip()
             if line.startswith("Name:"):
                 current_iface = line.split("Name:")[1].strip()
-                logging.debug(f"Parsing interface block: {current_iface}")
                 mode = None
             elif "Operational Mode:" in line and current_iface:
                 mode = line.split("Operational Mode:")[1].strip().lower()
-                logging.debug(f"Interface {current_iface} operational mode: {mode}")
-
-                if current_iface.lower().startswith("po"):
-                    logging.debug(f"Excluded {current_iface} — Port-channel")
+                if current_iface.lower().startswith("po") or mode == "trunk":
+                    logging.debug(f"Skipping interface {current_iface} (trunk or port-channel)")
                     current_iface = None
                     continue
-                if mode == "trunk":
-                    logging.debug(f"Excluded {current_iface} — trunk mode")
-                    current_iface = None
-                    continue
-
-                logging.debug(f"Included valid access interface: {current_iface}")
                 valid_interfaces.append(current_iface)
                 current_iface = None
-
-        logging.debug(f"Valid access interfaces found: {valid_interfaces}")
 
         return {
             "host": hostname,
@@ -154,9 +137,8 @@ def find_host(hostname):
         }
 
     except Exception as e:
-        logging.exception(f"Exception during find_host({hostname}): {e}")
+        logging.exception(f"Error looking up host: {hostname}")
         return {}
-
 
 def get_interface_details(host, interface):
     logging.debug(f"Getting interface details for {host} - {interface}")
@@ -189,19 +171,28 @@ def get_interface_details(host, interface):
                 mode = None
             elif "Operational Mode:" in line and current_iface:
                 mode = line.split("Operational Mode:")[1].strip().lower()
-
                 if current_iface.lower().startswith("po") or mode == "trunk":
+                    logging.debug(f"Skipping interface {current_iface} (trunk or port-channel)")
                     current_iface = None
                     continue
-
                 valid_interfaces.append(current_iface)
                 current_iface = None
 
-        mac_entry = next(
-            (entry for entry in task_result.get("mac_address_table", [])
-             if entry["interface"] == interface),
-            None
-        )
+        # Try to match MAC address based on interface
+        mac_entry = None
+        interface_normalized = interface.replace("GigabitEthernet", "Gi").lower()
+
+        for entry in task_result.get("mac_address_table", []):
+            entry_iface = expand_interface(entry["interface"].strip())
+            entry_normalized = entry_iface.replace("GigabitEthernet", "Gi").lower()
+
+            if entry_normalized == interface_normalized:
+                mac_entry = entry
+                logging.debug(f"Matched MAC {mac_entry['mac']} to interface {interface}")
+                break
+
+        if not mac_entry:
+            logging.debug(f"No MAC found for interface {interface} on host {host}")
 
         iface_details = interfaces.get(interface, {})
         vlan = get_interface_vlan_from_vlans(interface, vlan_info)
