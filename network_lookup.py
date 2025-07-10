@@ -1,7 +1,9 @@
 import logging
 from nornir import InitNornir
 from nornir_napalm.plugins.tasks import napalm_get
-
+import re
+from nornir_netmiko.tasks import netmiko_send_config, netmiko_send_command
+nr = InitNornir(config_file="config.yaml")
 # Set up logging
 logging.basicConfig(
     filename="network_debug.log",
@@ -21,10 +23,17 @@ INTERFACE_MAP = {
 
 
 def expand_interface(short_name):
+    # Avoid expanding if already expanded
+    if any(short_name.startswith(long) for long in INTERFACE_MAP.values()):
+        return short_name  # already expanded
+
     for short, long in INTERFACE_MAP.items():
-        if short_name.startswith(short):
+        if short_name.lower().startswith(short.lower()):
             return short_name.replace(short, long, 1)
+
     return short_name
+
+
 
 
 def get_interface_vlan_from_vlans(interface, vlan_info):
@@ -43,10 +52,12 @@ def get_interface_details(host, interface):
     filtered = nr.filter(name=host)
 
     try:
+        # Get data from both Napalm and Netmiko
         result = filtered.run(
             task=napalm_get,
             getters=["mac_address_table", "interfaces", "get_snmp_information", "get_vlans"]
         )
+
         result_values = list(result.values())
         if not result_values:
             logging.error(f"No result returned for host: {host}")
@@ -59,11 +70,36 @@ def get_interface_details(host, interface):
 
         interfaces = task_result.get("interfaces", {})
         vlan_info = task_result.get("get_vlans", {})
+
+        # Run Netmiko show interfaces switchport to find trunks
+        switchport_output = filtered.run(
+            task=netmiko_send_command,
+            command_string="show interfaces switchport"
+        )
+        switchport_raw = list(switchport_output.values())[0].result
+
+        # Parse out trunk interfaces
+        trunk_interfaces = []
+        current_iface = None
+        for line in switchport_raw.splitlines():
+            if line.startswith("Name:"):
+                current_iface = line.split("Name:")[1].strip()
+            elif "Administrative Mode:" in line and "trunk" in line.lower():
+                if current_iface:
+                    trunk_interfaces.append(current_iface)
+
+        # Filter interfaces to exclude trunks
+        available_interfaces = [
+            iface for iface in interfaces.keys()
+            if iface not in trunk_interfaces
+        ]
+
         mac_entry = next(
             (entry for entry in task_result.get("mac_address_table", [])
              if entry["interface"] == interface),
             None
         )
+
         iface_details = interfaces.get(interface, {})
         vlan = get_interface_vlan_from_vlans(interface, vlan_info)
 
@@ -73,7 +109,7 @@ def get_interface_details(host, interface):
             "mac_address": mac_entry["mac"] if mac_entry else "",
             "vlan": vlan,
             "available_vlans": [str(v) for v in vlan_info.keys()],
-            "available_interfaces": list(interfaces.keys()),
+            "available_interfaces": available_interfaces,
             "description": iface_details.get("description", ""),
             "snmp_location": task_result.get("get_snmp_information", {}).get("location", "")
         }
@@ -159,7 +195,9 @@ def find_host(hostname):
         return {}
 
     try:
-        result = nr.filter(name=hostname).run(
+        filtered = nr.filter(name=hostname)
+
+        result = filtered.run(
             task=napalm_get,
             getters=["interfaces", "get_snmp_information", "get_vlans"]
         )
@@ -173,10 +211,34 @@ def find_host(hostname):
             logging.error(f"Unexpected result format for host {hostname}: {type(task_result)}")
             return {}
 
+        interfaces = task_result.get("interfaces", {})
+        vlan_info = task_result.get("get_vlans", {})
+
+        # Run Netmiko to find trunk interfaces
+        switchport_output = filtered.run(
+            task=netmiko_send_command,
+            command_string="show interfaces switchport"
+        )
+        switchport_raw = list(switchport_output.values())[0].result
+
+        trunk_interfaces = []
+        current_iface = None
+        for line in switchport_raw.splitlines():
+            if line.startswith("Name:"):
+                current_iface = line.split("Name:")[1].strip()
+            elif "Administrative Mode:" in line and "trunk" in line.lower():
+                if current_iface:
+                    trunk_interfaces.append(current_iface)
+
+        available_interfaces = [
+            iface for iface in interfaces.keys()
+            if iface not in trunk_interfaces
+        ]
+
         return {
             "host": hostname,
-            "available_vlans": list(task_result.get("get_vlans", {}).keys()),
-            "available_interfaces": list(task_result.get("interfaces", {}).keys()),
+            "available_vlans": list(vlan_info.keys()),
+            "available_interfaces": available_interfaces,
             "snmp_location": task_result.get("get_snmp_information", {}).get("location", "")
         }
 
