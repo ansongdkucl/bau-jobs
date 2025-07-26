@@ -145,52 +145,63 @@ def get_interface_details(host, interface):
     filtered = nr.filter(name=host)
 
     try:
-        result = filtered.run(
+        # --- Run NAPALM and Netmiko tasks ---
+        results = filtered.run(
             task=napalm_get,
             getters=["mac_address_table", "interfaces", "get_snmp_information", "get_vlans"]
         )
-        task_result = list(result.values())[0].result
-
-        interfaces = task_result.get("interfaces", {})
-        vlan_info = task_result.get("get_vlans", {})
-
         switchport_output = filtered.run(
             task=netmiko_send_command,
             command_string="show interfaces switchport"
         )
-        switchport_raw = list(switchport_output.values())[0].result
 
+        # --- Process NAPALM results safely ---
+        napalm_task = list(results.values())[0]
+        task_result = {}
+        if napalm_task.failed:
+            logging.error(f"NAPALM task failed on {host}: {napalm_task.result}")
+        elif not isinstance(napalm_task.result, dict):
+            logging.error(f"Unexpected NAPALM result type for {host}: {type(napalm_task.result)}")
+        else:
+            task_result = napalm_task.result
+
+        # --- Process Netmiko results safely ---
+        switchport_task = list(switchport_output.values())[0]
         valid_interfaces = []
-        current_iface = None
-        mode = None
-
-        for line in switchport_raw.splitlines():
-            line = line.strip()
-            if line.startswith("Name:"):
-                current_iface = line.split("Name:")[1].strip()
-                mode = None
-            elif "Operational Mode:" in line and current_iface:
-                mode = line.split("Operational Mode:")[1].strip().lower()
-                if current_iface.lower().startswith("po") or mode == "trunk":
-                    logging.debug(f"Skipping interface {current_iface} (trunk or port-channel)")
+        if switchport_task.failed:
+            logging.error(f"Netmiko 'show interfaces switchport' failed on {host}: {switchport_task.result}")
+        else:
+            switchport_raw = switchport_task.result
+            current_iface = None
+            mode = None
+            for line in switchport_raw.splitlines():
+                line = line.strip()
+                if line.startswith("Name:"):
+                    current_iface = line.split("Name:")[1].strip()
+                    mode = None
+                elif "Operational Mode:" in line and current_iface:
+                    mode = line.split("Operational Mode:")[1].strip().lower()
+                    if current_iface.lower().startswith("po") or mode == "trunk":
+                        logging.debug(f"Skipping interface {current_iface} (trunk or port-channel)")
+                        current_iface = None
+                        continue
+                    valid_interfaces.append(current_iface)
                     current_iface = None
-                    continue
-                valid_interfaces.append(current_iface)
-                current_iface = None
 
-        # Try to match MAC address based on interface
+        # --- Assemble interface details from safe results ---
+        interfaces = task_result.get("interfaces", {})
+        vlan_info = task_result.get("get_vlans", {})
         mac_entry = None
         interface_normalized = interface.replace("GigabitEthernet", "Gi").lower()
 
         for entry in task_result.get("mac_address_table", []):
             entry_iface = expand_interface(entry["interface"].strip())
             entry_normalized = entry_iface.replace("GigabitEthernet", "Gi").lower()
-
             if entry_normalized == interface_normalized:
                 mac_entry = entry
                 logging.debug(f"Matched MAC {mac_entry['mac']} to interface {interface}")
                 break
-
+        
         if not mac_entry:
             logging.debug(f"No MAC found for interface {interface} on host {host}")
 
@@ -207,17 +218,11 @@ def get_interface_details(host, interface):
             "description": iface_details.get("description", ""),
             "snmp_location": task_result.get("get_snmp_information", {}).get("location", "")
         }
-    
+    #
     except Exception as e:
         logging.exception(f"Failed to get interface details for {host} - {interface}")
         return {
-            "host": host,
-            "interface": interface,
-            "mac_address": "",
-            "vlan": "",
-            "available_vlans": [],
-            "available_interfaces": [],
-            "description": "",
-            "snmp_location": "",
-            "error": str(e)
+            "host": host, "interface": interface, "mac_address": "", "vlan": "",
+            "available_vlans": [], "available_interfaces": [], "description": "",
+            "snmp_location": "", "error": str(e)
         }

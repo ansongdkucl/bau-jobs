@@ -5,7 +5,8 @@ from network_lookup import (
     find_mac,
     find_port_description,
     find_host,
-    nr
+    nr,
+    INTERFACE_MAP
 )
 from nornir_netmiko.tasks import netmiko_send_config, netmiko_send_command
 from nornir.core.filter import F
@@ -69,11 +70,13 @@ def search():
         "available_vlans": [],
         "available_interfaces": []
     }
+    requested_interface = ""
 
     if not query:
         flash("Please enter a search value.", "error")
         return render_template("index.html", fields=fields)
 
+    # Hostname search
     if query.lower() in [h.lower() for h in nr.inventory.hosts.keys()]:
         result = find_host(query)
         if result:
@@ -81,26 +84,50 @@ def search():
             flash(f"Hostname found: {result['host']}", "success")
         else:
             flash("Hostname not found.", "error")
+        # This path has a return, which is good.
         return render_template("index.html", fields=fields)
 
+    # MAC Address search
     if re.match(MAC_REGEX, query):
         result = find_mac(query)
         if result:
+            long_name = result['interface']
+            requested_interface = long_name
+            for short, long_val in INTERFACE_MAP.items():
+                if long_name.lower().startswith(long_val.lower()):
+                    # Use .replace() on the original case string but with lowercased search terms
+                    requested_interface = long_name.replace(long_val, short, 1)
+                    break
             fields.update(result)
             flash(f"MAC found on {result['host']} {result['interface']}", "success")
         else:
             flash("MAC address not found.", "error")
-        return render_template("index.html", fields=fields)
+        # This path also has a return, which is good.
+        return render_template("index.html", fields=fields, requested_interface=requested_interface)
 
+    # --- THIS IS THE CORRECTED SECTION ---
+    # Default to port description search
     matches = find_port_description(query)
     if matches:
-        details = get_interface_details(matches[0]['host'], matches[0]['interface'])
+        first_match = matches[0]
+        details = get_interface_details(first_match['host'], first_match['interface'])
+        
+        long_name = first_match['interface']
+        requested_interface = long_name
+        for short, long_val in INTERFACE_MAP.items():
+            if long_name.lower().startswith(long_val.lower()):
+                requested_interface = long_name.replace(long_val, short, 1)
+                break
+
         fields.update(details)
-        flash(f"Description found: {matches[0]['host']} ({matches[0]['interface']}): {matches[0]['description']}", "success")
+        flash(f"Description found: {first_match['host']} ({first_match['interface']}): {first_match['description']}", "success")
     else:
         flash("No matching port description found.", "error")
 
-    return render_template("index.html", fields=fields)
+    # THIS RETURN STATEMENT IS CRITICAL. It handles the return for the port
+    # description search path, whether a match was found or not.
+    return render_template("index.html", fields=fields, requested_interface=requested_interface)
+
 
 @app.route("/change_vlan", methods=["POST"])
 def change_vlan():
@@ -174,7 +201,8 @@ def change_vlan():
         updated_fields = get_interface_details(host, interface)
         updated_fields["interface"] = interface
 
-        show_cmd = f"show interfaces {interface} switchport"
+        show_cmd = f"show run interface {interface}"
+        #show_cmd = f"show interfaces {interface} switchport"
         show_result = target.run(task=netmiko_send_command, command_string=show_cmd)
         show_output = list(show_result.values())[0].result
 
@@ -218,7 +246,7 @@ def refresh_interface():
         requested_interface=interface_short,
         requested_vlan=fields.get("vlan")
     )
-#
+
 
 
 #
