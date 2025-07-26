@@ -207,7 +207,7 @@ def get_interface_details(host, interface):
             "description": iface_details.get("description", ""),
             "snmp_location": task_result.get("get_snmp_information", {}).get("location", "")
         }
-
+    
     except Exception as e:
         logging.exception(f"Failed to get interface details for {host} - {interface}")
         return {

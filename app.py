@@ -112,16 +112,17 @@ def change_vlan():
 
     interface = expand_interface(interface_short)
     fields = get_interface_details(host, interface)
+    
+    # Always maintain the original interface selection
     fields["interface"] = interface
-
-    requested_vlan = new_vlan or fields.get('vlan', '')
+    requested_interface = interface_short  # This will be passed to template
 
     if not request.form.get("change_vlan"):
         return render_template(
             "index.html",
             fields=fields,
-            requested_interface=interface_short,
-            requested_vlan=requested_vlan
+            requested_interface=requested_interface,
+            requested_vlan=new_vlan or fields.get('vlan', '')
         )
 
     if not new_vlan or new_vlan not in [str(v) for v in fields.get('available_vlans', [])]:
@@ -129,8 +130,8 @@ def change_vlan():
         return render_template(
             "index.html",
             fields=fields,
-            requested_interface=interface_short,
-            requested_vlan=requested_vlan
+            requested_interface=requested_interface,
+            requested_vlan=new_vlan or fields.get('vlan', '')
         )
 
     if not confirm:
@@ -143,8 +144,8 @@ def change_vlan():
             "index.html",
             fields=fields,
             confirmation_message=confirmation_message,
-            requested_interface=interface_short,
-            requested_vlan=requested_vlan
+            requested_interface=requested_interface,
+            requested_vlan=new_vlan
         )
 
     try:
@@ -165,16 +166,17 @@ def change_vlan():
             return render_template(
                 "index.html",
                 fields=fields,
-                requested_interface=interface_short,
-                requested_vlan=requested_vlan
+                requested_interface=requested_interface,
+                requested_vlan=new_vlan
             )
+
+        # Get fresh interface details after the change
+        updated_fields = get_interface_details(host, interface)
+        updated_fields["interface"] = interface
 
         show_cmd = f"show interfaces {interface} switchport"
         show_result = target.run(task=netmiko_send_command, command_string=show_cmd)
         show_output = list(show_result.values())[0].result
-
-        updated_fields = get_interface_details(host, interface)
-        updated_fields["interface"] = interface
 
         success_message = (
             f"Successfully changed VLAN on {host} interface {interface_short} "
@@ -187,9 +189,8 @@ def change_vlan():
             "index.html",
             fields=updated_fields,
             success_message=success_message,
-            netmiko_output=task.result,
-            requested_interface=interface_short,
-            requested_vlan=requested_vlan
+            requested_interface=requested_interface,
+            requested_vlan=new_vlan
         )
 
     except Exception as e:
@@ -198,8 +199,8 @@ def change_vlan():
         return render_template(
             "index.html",
             fields=fields,
-            requested_interface=interface_short,
-            requested_vlan=requested_vlan
+            requested_interface=requested_interface,
+            requested_vlan=new_vlan
         )
 
 @app.route("/refresh-interface", methods=["POST"])
@@ -217,6 +218,17 @@ def refresh_interface():
         requested_interface=interface_short,
         requested_vlan=fields.get("vlan")
     )
+#
 
+
+#
 if __name__ == "__main__":
-    app.run(debug=True, port=5001)
+    app.run(debug=True, port=5016)
+
+
+
+
+#flask run --host=0.0.0.0 --port=5000
+
+#docker build -t flask-app .
+#docker run -p 5000:5000 flask-app
