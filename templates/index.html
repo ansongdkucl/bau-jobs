@@ -1,8 +1,9 @@
+
+
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <title>Network VLAN Tool</title>
+    <title>Network VLAN Management Tool</title>
     <style>
         body { 
             font-family: Arial, sans-serif; 
@@ -88,7 +89,6 @@
     </style>
 </head>
 <body>
-
     <h1>Network VLAN Management Tool</h1>
 
     <!-- Display Flash Messages (Success/Error) -->
@@ -118,10 +118,9 @@
                 <input type="hidden" name="host" value="{{ fields.host }}">
                 <label for="interface">Interface:</label>
                 <select name="interface" id="interface" onchange="document.getElementById('interfaceForm').submit();">
-                    <option value="">-- Select an Interface --</option>
+                    <option value="" disabled {% if not requested_interface %}selected{% endif %}>-- Select an Interface --</option>
                     {% for iface in fields.available_interfaces %}
-                        <option value="{{ iface }}" 
-                            {% if iface == requested_interface %}selected{% endif %}>
+                        <option value="{{ iface }}" {% if iface == requested_interface %}selected{% endif %}>
                             {{ iface }}
                         </option>
                     {% endfor %}
@@ -147,17 +146,17 @@
             </div>
         </div>
 
-        <!-- VLAN Change Form (display only if VLANs are available) -->
+        <!-- VLAN and Description Change Form (display only if VLANs and interface are available) -->
         {% if fields.available_vlans and fields.interface %}
-            <h3>Change VLAN</h3>
+            <h3>Change Interface Settings</h3>
             <form method="POST" action="/change_vlan">
                 <input type="hidden" name="host" value="{{ fields.host }}">
-                <input type="hidden" name="interface" value="{{ requested_interface }}">
-                <input type="hidden" name="current_vlan" value="{{ fields.vlan }}">
+                <input type="hidden" name="interface" value="{{ requested_interface or fields.interface }}">
+                <input type="hidden" name="current_vlan" value="{{ fields.vlan or '' }}">
 
                 <label for="new_vlan">New VLAN:</label>
                 <select name="new_vlan" id="new_vlan">
-                    <option value="">-- Select VLAN --</option>
+                    <option value="" {% if not requested_vlan %}selected{% endif %}>-- Select VLAN --</option>
                     {% for vlan_id in fields.available_vlans %}
                         <option value="{{ vlan_id }}" {% if vlan_id|string == requested_vlan|string %}selected{% endif %}>
                             VLAN {{ vlan_id }}
@@ -165,23 +164,26 @@
                     {% endfor %}
                 </select>
 
+                <label for="new_description">Description:</label>
+                <input type="text" name="new_description" id="new_description" placeholder="Enter new description" value="{{ requested_description or fields.description or '' }}">
+
                 <!-- Confirmation Logic -->
                 {% if confirmation_message %}
+                    <input type="hidden" name="new_vlan" value="{{ requested_vlan or '' }}">
+                    <input type="hidden" name="new_description" value="{{ requested_description or '' }}">
                     <input type="hidden" name="confirm" value="true">
                     <div class="flash success">{{ confirmation_message | safe }}</div>
-                    <button type="submit" name="change_vlan" value="1">Confirm VLAN Change</button>
+                    <button type="submit" name="change_vlan" value="1">Confirm Changes</button>
                 {% else %}
-                    <button type="submit" name="change_vlan" value="1">Submit VLAN Change</button>
+                    <button type="submit" name="change_vlan" value="1">Submit Changes</button>
                 {% endif %}
             </form>
         {% endif %}
 
-        <!-- Display Success Message after VLAN change -->
+        <!-- Display Success Message after changes -->
         {% if success_message %}
             <div class="flash success">{{ success_message | safe }}</div>
         {% endif %}
-        
     {% endif %}
-
 </body>
 </html>

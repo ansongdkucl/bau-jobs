@@ -136,20 +136,22 @@ def change_vlan():
     new_vlan = request.form.get("new_vlan")
     current_vlan = request.form.get("current_vlan")
     confirm = request.form.get("confirm")
+    new_description = request.form.get("new_description", "").strip()
 
     interface = expand_interface(interface_short)
     fields = get_interface_details(host, interface)
-    
+
     # Always maintain the original interface selection
     fields["interface"] = interface
-    requested_interface = interface_short  # This will be passed to template
+    requested_interface = interface_short
 
     if not request.form.get("change_vlan"):
         return render_template(
             "index.html",
             fields=fields,
             requested_interface=requested_interface,
-            requested_vlan=new_vlan or fields.get('vlan', '')
+            requested_vlan=new_vlan or fields.get('vlan', ''),
+            requested_description=new_description
         )
 
     if not new_vlan or new_vlan not in [str(v) for v in fields.get('available_vlans', [])]:
@@ -158,7 +160,8 @@ def change_vlan():
             "index.html",
             fields=fields,
             requested_interface=requested_interface,
-            requested_vlan=new_vlan or fields.get('vlan', '')
+            requested_vlan=new_vlan or fields.get('vlan', ''),
+            requested_description=new_description
         )
 
     if not confirm:
@@ -167,23 +170,31 @@ def change_vlan():
             f"on interface <b>{interface_short}</b> from VLAN <b>{current_vlan}</b> "
             f"to VLAN <b>{new_vlan}</b>."
         )
+        if new_description:
+            confirmation_message += f"<br>You also requested to change the description to: <b>{new_description}</b>"
+
         return render_template(
             "index.html",
             fields=fields,
             confirmation_message=confirmation_message,
             requested_interface=requested_interface,
-            requested_vlan=new_vlan
+            requested_vlan=new_vlan,
+            requested_description=new_description
         )
 
     try:
         target = nr.filter(F(name=host))
         app.logger.info(f"Changing VLAN on {host} {interface} from {current_vlan} to {new_vlan}")
+        if new_description:
+            app.logger.info(f"Updating description to: {new_description}")
 
         cmds = [
             f"interface {interface}",
-            f"switchport access vlan {new_vlan}",
-            "end"
+            f"switchport access vlan {new_vlan}"
         ]
+        if new_description:
+            cmds.append(f"description {new_description}")
+        cmds.append("end")
 
         config_result = target.run(task=netmiko_send_config, config_commands=cmds)
         task = list(config_result.values())[0]
@@ -194,22 +205,26 @@ def change_vlan():
                 "index.html",
                 fields=fields,
                 requested_interface=requested_interface,
-                requested_vlan=new_vlan
+                requested_vlan=new_vlan,
+                requested_description=new_description
             )
 
-        # Get fresh interface details after the change
+        # Refresh updated fields
         updated_fields = get_interface_details(host, interface)
         updated_fields["interface"] = interface
 
         show_cmd = f"show run interface {interface}"
-        #show_cmd = f"show interfaces {interface} switchport"
         show_result = target.run(task=netmiko_send_command, command_string=show_cmd)
         show_output = list(show_result.values())[0].result
 
         success_message = (
             f"Successfully changed VLAN on {host} interface {interface_short} "
-            f"from {current_vlan} to {new_vlan}.<br>"
-            f"<b>Config output:</b><br><pre>{task.result}</pre>"
+            f"from {current_vlan} to {new_vlan}."
+        )
+        if new_description:
+            success_message += f"<br>New description: <b>{new_description}</b>"
+        success_message += (
+            f"<br><b>Config output:</b><br><pre>{task.result}</pre>"
             f"<b>Verification output:</b><br><pre>{show_output}</pre>"
         )
 
@@ -228,8 +243,10 @@ def change_vlan():
             "index.html",
             fields=fields,
             requested_interface=requested_interface,
-            requested_vlan=new_vlan
+            requested_vlan=new_vlan,
+            requested_description=new_description
         )
+
 
 @app.route("/refresh-interface", methods=["POST"])
 def refresh_interface():
@@ -251,7 +268,7 @@ def refresh_interface():
 
 #
 if __name__ == "__main__":
-    app.run(debug=True, port=5016)
+    app.run(debug=True, port=5002)
 
 
 
